@@ -99,6 +99,7 @@ make CROSS_COMPILE=${CROSS_COMPILE} all
 # on the target rootfs
 cp -r ${FINDER_APP_DIR}/finder.sh ${FINDER_APP_DIR}/finder-test.sh ${ramfs_dir}/home/
 cp -r ${FINDER_APP_DIR}/writer ${ramfs_dir}/home/
+cp -r ${FINDER_APP_DIR}/autorun-qemu.sh ${ramfs_dir}/home/
 mkdir ${ramfs_dir}/home/conf
 cp -r ${FINDER_APP_DIR}/conf/* ${ramfs_dir}/home/conf/
 # TODO: Chown the root directory
