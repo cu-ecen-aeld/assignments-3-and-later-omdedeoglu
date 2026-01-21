@@ -12,6 +12,7 @@ BUSYBOX_VERSION=1_33_1
 FINDER_APP_DIR=$(realpath $(dirname $0))
 ARCH=arm64
 CROSS_COMPILE=aarch64-none-linux-gnu-
+CROSS_COMPILER_PATH=/home/omdedeoglu/arm-cross-compiler/arm-gnu-toolchain-13.3.rel1-x86_64-aarch64-none-linux-gnu/aarch64-none-linux-gnu/libc
 
 if [ $# -lt 1 ]
 then
@@ -84,12 +85,12 @@ ${CROSS_COMPILE}readelf -a bin/busybox | grep "program interpreter"
 ${CROSS_COMPILE}readelf -a bin/busybox | grep "Shared library"
 
 # TODO: Add library dependencies to rootfs
-echo "home directory contents:"
-ls /home/omdedeoglu
-sudo cp "/home/omdedeoglu/arm-cross-compiler/arm-gnu-toolchain-13.3.rel1-x86_64-aarch64-none-linux-gnu/aarch64-none-linux-gnu/libc/lib/ld-linux-aarch64.so.1" "${ramfs_dir}/lib/"
-sudo cp "/home/omdedeoglu/arm-cross-compiler/arm-gnu-toolchain-13.3.rel1-x86_64-aarch64-none-linux-gnu/aarch64-none-linux-gnu/libc/lib64/libm.so.6" "${ramfs_dir}/lib64/"
-sudo cp "/home/omdedeoglu/arm-cross-compiler/arm-gnu-toolchain-13.3.rel1-x86_64-aarch64-none-linux-gnu/aarch64-none-linux-gnu/libc/lib64/libresolv.so.2" "${ramfs_dir}/lib64/"
-sudo cp "/home/omdedeoglu/arm-cross-compiler/arm-gnu-toolchain-13.3.rel1-x86_64-aarch64-none-linux-gnu/aarch64-none-linux-gnu/libc/lib64/libc.so.6" "${ramfs_dir}/lib64/"
+echo "cross compiler directory contents:"
+ls ${CROSS_COMPILER_PATH}
+sudo cp "${CROSS_COMPILER_PATH}/lib/ld-linux-aarch64.so.1" "${ramfs_dir}/lib/"
+sudo cp "${CROSS_COMPILER_PATH}/lib64/libm.so.6" "${ramfs_dir}/lib64/"
+sudo cp "${CROSS_COMPILER_PATH}/lib64/libresolv.so.2" "${ramfs_dir}/lib64/"
+sudo cp "${CROSS_COMPILER_PATH}/lib64/libc.so.6" "${ramfs_dir}/lib64/"
 # TODO: Make device nodes
 sudo mknod -m 666 ${ramfs_dir}/dev/null c 1 3
 sudo mknod -m 666 ${ramfs_dir}/dev/console c 5 1
