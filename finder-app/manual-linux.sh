@@ -85,6 +85,10 @@ ${CROSS_COMPILE}readelf -a bin/busybox | grep "program interpreter"
 ${CROSS_COMPILE}readelf -a bin/busybox | grep "Shared library"
 
 # TODO: Add library dependencies to rootfs
+echo "pwd"
+pwd
+echo "whoami"
+whoami
 echo "cross compiler directory contents:"
 ls ${CROSS_COMPILER_PATH}
 sudo cp "${CROSS_COMPILER_PATH}/lib/ld-linux-aarch64.so.1" "${ramfs_dir}/lib/"
