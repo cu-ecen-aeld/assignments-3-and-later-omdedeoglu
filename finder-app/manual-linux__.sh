@@ -12,14 +12,16 @@ BUSYBOX_VERSION=1_33_1
 FINDER_APP_DIR=$(realpath $(dirname $0))
 ARCH=arm64
 CROSS_COMPILE=aarch64-none-linux-gnu-
-CROSS_COMPILER_PATH=/opt/arm-cross-compiler/arm-gnu-toolchain-13.3.rel1-x86_64-aarch64-none-linux-gnu/aarch64-none-linux-gnu/libc
+CROSS_COMPILER_PATH=/tmp/arm-cross-compiler/arm-gnu-toolchain-13.3.rel1-x86_64-aarch64-none-linux-gnu/aarch64-none-linux-gnu/libc
 
-echo "pwd"
-pwd
-echo "whoami"
-whoami
-echo "cross compiler directory contents:"
-ls ${CROSS_COMPILER_PATH}
+export PATH="$PATH:/tmp/arm-cross-compiler/arm-gnu-toolchain-13.3.rel1-x86_64-aarch64-none-linux-gnu/bin"
+echo "pwd"; pwd
+echo "whoami"; whoami
+sysroot=$(${CROSS_COMPILE}gcc -print-sysroot)
+echo ${sysroot}
+#echo "cat /proc/mounts"; cat /proc/mounts
+#echo "/tmp"; ls /tmp
+#echo "cross compiler directory contents:"; ls ${CROSS_COMPILER_PATH}
 
 if [ $# -lt 1 ]
 then
@@ -43,15 +45,15 @@ if [ ! -e ${OUTDIR}/linux-stable/arch/${ARCH}/boot/Image ]; then
     git checkout ${KERNEL_VERSION}
 
     # TODO: Add your kernel build steps here
-    make ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} mrproper
-    make ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} defconfig
-    make -j4 ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} all
-    make ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} modules
-    make ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} dtbs
+#    make ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} mrproper
+#    make ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} defconfig
+#    make -j4 ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} all
+#    make ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} modules
+#    make ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} dtbs
 fi
 
 echo "Adding the Image in outdir"
-cp ${OUTDIR}/linux-stable/arch/${ARCH}/boot/Image ${OUTDIR}/Image
+#cp ${OUTDIR}/linux-stable/arch/${ARCH}/boot/Image ${OUTDIR}/Image
 
 echo "Creating the staging directory for the root filesystem"
 cd "$OUTDIR"
@@ -92,13 +94,13 @@ ${CROSS_COMPILE}readelf -a bin/busybox | grep "program interpreter"
 ${CROSS_COMPILE}readelf -a bin/busybox | grep "Shared library"
 
 # TODO: Add library dependencies to rootfs
-sudo cp "${CROSS_COMPILER_PATH}/lib/ld-linux-aarch64.so.1" "${ramfs_dir}/lib/"
-sudo cp "${CROSS_COMPILER_PATH}/lib64/libm.so.6" "${ramfs_dir}/lib64/"
-sudo cp "${CROSS_COMPILER_PATH}/lib64/libresolv.so.2" "${ramfs_dir}/lib64/"
-sudo cp "${CROSS_COMPILER_PATH}/lib64/libc.so.6" "${ramfs_dir}/lib64/"
+sudo cp "${sysroot}/lib/ld-linux-aarch64.so.1" "${ramfs_dir}/lib/"
+sudo cp "${sysroot}/lib64/libm.so.6" "${ramfs_dir}/lib64/"
+sudo cp "${sysroot}/lib64/libresolv.so.2" "${ramfs_dir}/lib64/"
+sudo cp "${sysroot}/lib64/libc.so.6" "${ramfs_dir}/lib64/"
 # TODO: Make device nodes
-sudo mknod -m 666 ${ramfs_dir}/dev/null c 1 3
-sudo mknod -m 666 ${ramfs_dir}/dev/console c 5 1
+#sudo mknod -m 666 ${ramfs_dir}/dev/null c 1 3
+#sudo mknod -m 666 ${ramfs_dir}/dev/console c 5 1
 # TODO: Clean and build the writer utility
 cd ${FINDER_APP_DIR}
 make CROSS_COMPILE=${CROSS_COMPILE} clean
