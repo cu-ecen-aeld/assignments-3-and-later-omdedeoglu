@@ -16,7 +16,8 @@ CROSS_COMPILER_PATH=/opt/arm-cross-compiler/arm-gnu-toolchain-13.3.rel1-x86_64-a
 
 echo "pwd"; pwd
 echo "whoami"; whoami
-echo "cat /proc/mounts"; cat /proc/mounts
+#echo "cat /proc/mounts"; cat /proc/mounts
+echo "/tmp"; ls /tmp
 echo "cross compiler directory contents:"; ls ${CROSS_COMPILER_PATH}
 
 if [ $# -lt 1 ]
