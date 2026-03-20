@@ -14,9 +14,15 @@
 #include <stdbool.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <fcntl.h>
+#include <sys/stat.h>
 
 
+
+#define DATA_FILE "/var/tmp/aesdsocketdata"
+#define FILE_BUF_SIZE 1024
 #define BUF_SIZE 500
+#define PORT "9000"
 
 bool caught_sigint = false;
 bool caught_sigterm = false;
@@ -57,16 +63,17 @@ int main(int argc, char *argv[]) {
 
     struct addrinfo hints;
     struct addrinfo *result, *rp;
-    int status, socketfd=-1, acceptfd=-1;
+    int status, socketfd=-1, acceptfd=-1, numbytes=0;
     struct sockaddr_storage their_addr;
     socklen_t addr_size;
     char host[NI_MAXHOST];
+    char buf[BUF_SIZE];
 
     memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_flags = AI_PASSIVE;
-    if( (status = getaddrinfo(NULL, "9000", &hints, &result)) != 0){
+    if( (status = getaddrinfo(NULL, PORT, &hints, &result)) != 0){
         syslog(LOG_ERR, "getaddrinfo Failed! %s", strerror(errno));
         printf("getaddrinfo Failed! \n");
         return -1;
@@ -93,53 +100,143 @@ int main(int argc, char *argv[]) {
         return -1;
     }
 
-    if( listen(socketfd, 5) != 0){
+    if( listen(socketfd, 1) != 0){
         syslog(LOG_ERR, "listen Failed! %s", strerror(errno));
         printf("listen Failed! \n");
         return -1;
     }
 
     printf("server waiting connection over localhost:9000 \n");
+    
+    accept_connection:
+    addr_size = sizeof(their_addr);
+    acceptfd = accept(socketfd, (struct sockaddr *)&their_addr, &addr_size);
+    if (acceptfd == -1) {
+        syslog(LOG_ERR, "accept failed: %s", strerror(errno));
+    }
+
+    int rc = getnameinfo(
+        (struct sockaddr *)&their_addr,
+        addr_size,
+        host,
+        sizeof(host),
+        NULL,
+        0,
+        NI_NUMERICHOST
+    );
+
+    if (rc == 0) {
+        printf("Accepted connection from %s\n", host);
+        syslog(LOG_INFO, "Accepted connection from %s", host);
+    }
+    
     while(1){
         if( caught_sigint ) {
             syslog(LOG_ERR, "Caught signal, exiting ");
             printf("\nCaught SIGINT!\n");
-            close(socketfd);
-            close(acceptfd);
-            break;
+            goto cleanup_connection;
         }
         if( caught_sigterm ) {
             syslog(LOG_ERR, "Caught signal, exiting ");
             printf("\nCaught SIGTERM!\n");
-            close(socketfd);
-            close(acceptfd);
-            break;
+            goto cleanup_connection;
         }
 
-        addr_size = sizeof(their_addr);
-        acceptfd = accept(socketfd, (struct sockaddr *)&their_addr, &addr_size);
-        if (acceptfd == -1) {
-            syslog(LOG_ERR, "accept failed: %s", strerror(errno));
-            continue;
+        char *packet = NULL;
+        size_t packet_size = 0;
+        bool newline_found = false;
+
+        while (!newline_found) {
+            numbytes = recv(acceptfd, buf, BUF_SIZE, 0);
+            if (numbytes == -1) {
+                syslog(LOG_ERR, "recv failed: %s", strerror(errno));
+                goto cleanup_connection;
+            }
+            if (numbytes == 0) {
+                // client closed connection
+                syslog(LOG_INFO, "Closed connection from %s", host);
+                printf("Closed connection from %s\n", host);
+                goto accept_connection;
+            }
+
+            char *new_packet = realloc(packet, packet_size + numbytes);
+            if (!new_packet) {
+                syslog(LOG_ERR, "realloc failed");
+                free(packet);
+                goto cleanup_connection;
+            }
+            packet = new_packet;
+            for(int i=0; i<numbytes; i++){
+                printf("buf[%d]:0x%X \n",i,buf[i]);
+            }
+            memcpy(packet + packet_size, buf, numbytes);
+            packet_size += numbytes;
+
+            if (memchr(buf, '\n', numbytes)) {
+                //printf("newline found\n");
+                newline_found = true;
+            }
         }
 
-        int rc = getnameinfo(
-            (struct sockaddr *)&their_addr,
-            addr_size,
-            host,
-            sizeof(host),
-            NULL,
-            0,
-            NI_NUMERICHOST
-        );
-
-        if (rc == 0) {
-            printf("Accepted connection from %s\n", host);
-            syslog(LOG_INFO, "Accepted connection from %s", host);
+        
+        //printf("open !\n");
+        int fd = open(DATA_FILE, O_WRONLY | O_CREAT | O_APPEND, 0644);
+        if (fd == -1) {
+            syslog(LOG_ERR, "open failed: %s", strerror(errno));
+            free(packet);
+            goto cleanup_connection;
         }
 
+        if (write(fd, packet, packet_size) == -1) {
+            syslog(LOG_ERR, "write failed: %s", strerror(errno));
+        }
+
+        close(fd);
+        free(packet);
+        packet = NULL;
+
+        
+        fd = open(DATA_FILE, O_RDONLY);
+        if (fd == -1) {
+            syslog(LOG_ERR, "open for read failed: %s", strerror(errno));
+            goto cleanup_connection;
+        }
+
+        char filebuf[FILE_BUF_SIZE];
+        ssize_t bytes_read;
+
+        while ((bytes_read = read(fd, filebuf, FILE_BUF_SIZE)) > 0) {
+            if (send(acceptfd, filebuf, bytes_read, 0) == -1) {
+                syslog(LOG_ERR, "send failed: %s", strerror(errno));
+                break;
+            }
+        }
+        close(fd);
 
     }
+
+    cleanup_connection:
+    printf("cleanup_connection\n");
+    syslog(LOG_INFO, "Ending aesdsocket server! cleanup_connection");
+    if (acceptfd != -1) {
+        syslog(LOG_INFO, "Closed connection from %s", host);
+        close(acceptfd);
+        acceptfd = -1;
+    }
+
+    if (socketfd != -1){
+        syslog(LOG_INFO, "Closed Socket %s", PORT);
+        close(socketfd);
+    }
+    
+    if (unlink(DATA_FILE) == 0) {
+        syslog(LOG_INFO, "%s File deleted successfully", DATA_FILE);
+        printf("File deleted successfully\n");
+    } else {
+        syslog(LOG_ERR, "unlink failed: %s", strerror(errno));
+    }
+
+    
 
     return 0;
 
