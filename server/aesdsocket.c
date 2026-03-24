@@ -1,3 +1,7 @@
+/*
+* aesdsocket.c 
+*/
+
 #define _POSIX_C_SOURCE 200112L
 #define _GNU_SOURCE
 
@@ -11,7 +15,7 @@
 #include <syslog.h>
 #include <errno.h>
 #include <signal.h>
-#include <stdbool.h>
+#include <stdbool.h>   
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <fcntl.h>
@@ -38,8 +42,76 @@ static void signal_handler ( int signal_number )
     errno = errno_saved;
 }
 
+
+static void daemonize(void)
+{
+    pid_t pid;
+
+    pid = fork();
+    if (pid < 0) {
+        syslog(LOG_ERR, "fork failed: %s", strerror(errno));
+        exit(EXIT_FAILURE);
+    }
+
+    if (pid > 0) {
+        // Parent exits
+        exit(EXIT_SUCCESS);
+    }
+
+    // Child continues
+    if (setsid() == -1) {
+        syslog(LOG_ERR, "setsid failed: %s", strerror(errno));
+        exit(EXIT_FAILURE);
+    }
+
+    // Optional second fork (not strictly required, but safe)
+    pid = fork();
+    if (pid < 0) {
+        syslog(LOG_ERR, "second fork failed");
+        exit(EXIT_FAILURE);
+    }
+    if (pid > 0) {
+        exit(EXIT_SUCCESS);
+    }
+
+    // Reset file mode mask
+    umask(0);
+
+    // Change working directory
+    if (chdir("/") != 0) {
+        syslog(LOG_ERR, "chdir failed");
+        exit(EXIT_FAILURE);
+    }
+
+    // Redirect standard files to /dev/null
+    int fd = open("/dev/null", O_RDWR);
+    if (fd != -1) {
+        dup2(fd, STDIN_FILENO);
+        dup2(fd, STDOUT_FILENO);
+        dup2(fd, STDERR_FILENO);
+        if (fd > STDERR_FILENO) {
+            close(fd);
+        }
+    }
+}
+
 int main(int argc, char *argv[]) {
+    
+    bool daemon_mode = false;
+
+    if (argc == 2 && strcmp(argv[1], "-d") == 0) {
+        daemon_mode = true;
+    } else if (argc > 1) {
+        fprintf(stderr, "Usage: %s [-d]\n", argv[0]);
+        exit(EXIT_FAILURE);
+    }
+
     openlog("aesdsocketApp", LOG_PID | LOG_CONS, LOG_USER);
+    
+    if (daemon_mode) {
+        daemonize();
+    }
+
     syslog(LOG_INFO, "Starting aesdsocket server");
 
     printf("Hello from aesdsocket.c! number of arguments: %d arguments: %s \n",argc, argv[0]);
@@ -166,9 +238,9 @@ int main(int argc, char *argv[]) {
                 goto cleanup_connection;
             }
             packet = new_packet;
-            for(int i=0; i<numbytes; i++){
+            /*for(int i=0; i<numbytes; i++){
                 printf("buf[%d]:0x%X \n",i,buf[i]);
-            }
+            }*/
             memcpy(packet + packet_size, buf, numbytes);
             packet_size += numbytes;
 
@@ -216,7 +288,7 @@ int main(int argc, char *argv[]) {
     }
 
     cleanup_connection:
-    printf("cleanup_connection\n");
+    //printf("cleanup_connection\n");
     syslog(LOG_INFO, "Ending aesdsocket server! cleanup_connection");
     if (acceptfd != -1) {
         syslog(LOG_INFO, "Closed connection from %s", host);
