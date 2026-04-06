@@ -20,6 +20,8 @@
 #include <netinet/in.h>
 #include <fcntl.h>
 #include <sys/stat.h>
+#include <sys/queue.h>
+#include <pthread.h>
 
 
 
@@ -30,6 +32,16 @@
 
 bool caught_sigint = false;
 bool caught_sigterm = false;
+
+
+typedef struct thread_ctx {
+    int client_fd;
+    int finished;
+    pthread_t tid;
+
+    SLIST_ENTRY(thread_ctx) entries;
+} thread_ctx_t;
+
 
 static void signal_handler ( int signal_number )
 {
@@ -95,6 +107,122 @@ static void daemonize(void)
     }
 }
 
+
+void *client_thread(void *arg)
+{
+    thread_ctx_t *ctx = arg;
+    /*char buf[1024];
+
+    while (1) {
+        ssize_t n = read(ctx->client_fd, buf, sizeof(buf));
+        if (n <= 0)
+            break;
+
+        write(ctx->client_fd, buf, n);
+    }
+
+    close(ctx->client_fd);
+    ctx->finished = 1;
+    return NULL;*/
+
+    int numbytes=0;
+    char buf[BUF_SIZE];
+
+    while(1){
+        if( caught_sigint ) {
+            syslog(LOG_ERR, "Caught signal, exiting ");
+            printf("\nCaught SIGINT!\n");
+            goto close_socket;
+        }
+        if( caught_sigterm ) {
+            syslog(LOG_ERR, "Caught signal, exiting ");
+            printf("\nCaught SIGTERM!\n");
+            goto close_socket;
+        }
+        char *packet = NULL;
+        size_t packet_size = 0;
+        bool newline_found = false;
+
+        while (!newline_found) {
+            numbytes = recv(ctx->client_fd, buf, BUF_SIZE, 0);
+            if (numbytes == -1) {
+                syslog(LOG_ERR, "recv failed: %s", strerror(errno));
+                goto close_socket;
+            }
+            if (numbytes == 0) {
+                // client closed connection
+                syslog(LOG_INFO, "Closed connection ");
+                printf("Closed connection \n");
+                goto close_socket;
+            }
+
+            char *new_packet = realloc(packet, packet_size + numbytes);
+            if (!new_packet) {
+                syslog(LOG_ERR, "realloc failed");
+                free(packet);
+                goto close_socket;
+            }
+            packet = new_packet;
+            for(int i=0; i<numbytes; i++){
+                printf("buf[%d]:0x%X \n",i,buf[i]);
+            }
+            memcpy(packet + packet_size, buf, numbytes);
+            packet_size += numbytes;
+
+            if (memchr(buf, '\n', numbytes)) {
+                //printf("newline found\n");
+                newline_found = true;
+            }
+        }
+
+        
+        //printf("open !\n");
+        int fd = open(DATA_FILE, O_WRONLY | O_CREAT | O_APPEND, 0644);
+        if (fd == -1) {
+            syslog(LOG_ERR, "open failed: %s", strerror(errno));
+            free(packet);
+            goto close_socket;
+        }
+
+        if (write(fd, packet, packet_size) == -1) {
+            syslog(LOG_ERR, "write failed: %s", strerror(errno));
+        }
+
+        close(fd);
+        free(packet);
+        packet = NULL;
+
+        
+        fd = open(DATA_FILE, O_RDONLY);
+        if (fd == -1) {
+            syslog(LOG_ERR, "open for read failed: %s", strerror(errno));
+            goto close_socket;
+        }
+
+        char filebuf[FILE_BUF_SIZE];
+        ssize_t bytes_read;
+
+        while ((bytes_read = read(fd, filebuf, FILE_BUF_SIZE)) > 0) {
+            if (send(ctx->client_fd, filebuf, bytes_read, 0) == -1) {
+                syslog(LOG_ERR, "send failed: %s", strerror(errno));
+                break;
+            }
+        }
+        close(fd);
+    }
+
+    close_socket:
+    if (ctx->client_fd != -1) {
+        //syslog(LOG_INFO, "Closed connection from %s", host);
+        syslog(LOG_INFO, "Closed connection");
+        close(ctx->client_fd);
+        ctx->client_fd = -1;
+        ctx->finished = 1;
+    }
+    return NULL;
+}
+
+
 int main(int argc, char *argv[]) {
     
     bool daemon_mode = false;
@@ -116,6 +244,11 @@ int main(int argc, char *argv[]) {
 
     printf("Hello from aesdsocket.c! number of arguments: %d arguments: %s \n",argc, argv[0]);
     
+    SLIST_HEAD(thread_list, thread_ctx);
+
+    struct thread_list threads;
+    SLIST_INIT(&threads);
+
     struct sigaction new_action;
     bool success = true;
     memset(&new_action,0,sizeof(struct sigaction));
@@ -135,11 +268,10 @@ int main(int argc, char *argv[]) {
 
     struct addrinfo hints;
     struct addrinfo *result, *rp;
-    int status, socketfd=-1, acceptfd=-1, numbytes=0;
+    int status, socketfd=-1, acceptfd=-1;
     struct sockaddr_storage their_addr;
     socklen_t addr_size;
     char host[NI_MAXHOST];
-    char buf[BUF_SIZE];
 
     memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_INET;
@@ -179,29 +311,7 @@ int main(int argc, char *argv[]) {
     }
 
     printf("server waiting connection over localhost:9000 \n");
-    
-    accept_connection:
-    addr_size = sizeof(their_addr);
-    acceptfd = accept(socketfd, (struct sockaddr *)&their_addr, &addr_size);
-    if (acceptfd == -1) {
-        syslog(LOG_ERR, "accept failed: %s", strerror(errno));
-    }
 
-    int rc = getnameinfo(
-        (struct sockaddr *)&their_addr,
-        addr_size,
-        host,
-        sizeof(host),
-        NULL,
-        0,
-        NI_NUMERICHOST
-    );
-
-    if (rc == 0) {
-        printf("Accepted connection from %s\n", host);
-        syslog(LOG_INFO, "Accepted connection from %s", host);
-    }
-    
     while(1){
         if( caught_sigint ) {
             syslog(LOG_ERR, "Caught signal, exiting ");
@@ -214,78 +324,52 @@ int main(int argc, char *argv[]) {
             goto cleanup_connection;
         }
 
-        char *packet = NULL;
-        size_t packet_size = 0;
-        bool newline_found = false;
+        addr_size = sizeof(their_addr);
+        acceptfd = accept(socketfd, (struct sockaddr *)&their_addr, &addr_size);
+        if (acceptfd != -1) {
+            
+            int rc = getnameinfo(
+            (struct sockaddr *)&their_addr,
+            addr_size,
+            host,
+            sizeof(host),
+            NULL,
+            0,
+            NI_NUMERICHOST
+            );
 
-        while (!newline_found) {
-            numbytes = recv(acceptfd, buf, BUF_SIZE, 0);
-            if (numbytes == -1) {
-                syslog(LOG_ERR, "recv failed: %s", strerror(errno));
-                goto cleanup_connection;
-            }
-            if (numbytes == 0) {
-                // client closed connection
-                syslog(LOG_INFO, "Closed connection from %s", host);
-                printf("Closed connection from %s\n", host);
-                goto accept_connection;
+            if (rc == 0) {
+                printf("Accepted connection from %s\n", host);
+                syslog(LOG_INFO, "Accepted connection from %s", host);
             }
 
-            char *new_packet = realloc(packet, packet_size + numbytes);
-            if (!new_packet) {
-                syslog(LOG_ERR, "realloc failed");
-                free(packet);
-                goto cleanup_connection;
-            }
-            packet = new_packet;
-            /*for(int i=0; i<numbytes; i++){
-                printf("buf[%d]:0x%X \n",i,buf[i]);
-            }*/
-            memcpy(packet + packet_size, buf, numbytes);
-            packet_size += numbytes;
-
-            if (memchr(buf, '\n', numbytes)) {
-                //printf("newline found\n");
-                newline_found = true;
-            }
+            thread_ctx_t *ctx = calloc(1, sizeof(*ctx));
+            ctx->client_fd = acceptfd;
+            pthread_create(&ctx->tid, NULL, client_thread, ctx);
+            SLIST_INSERT_HEAD(&threads, ctx, entries);
         }
 
-        
-        //printf("open !\n");
-        int fd = open(DATA_FILE, O_WRONLY | O_CREAT | O_APPEND, 0644);
-        if (fd == -1) {
-            syslog(LOG_ERR, "open failed: %s", strerror(errno));
-            free(packet);
-            goto cleanup_connection;
-        }
+        /* reap finished threads */
+        thread_ctx_t *curr = SLIST_FIRST(&threads);
+        thread_ctx_t *tmp = NULL;
 
-        if (write(fd, packet, packet_size) == -1) {
-            syslog(LOG_ERR, "write failed: %s", strerror(errno));
-        }
+        while (curr) {
+            
+            tmp = SLIST_NEXT(curr, entries);
+            
+            if (curr->finished) {
+                pthread_join(curr->tid, NULL);
+                SLIST_REMOVE(&threads, curr, thread_ctx, entries);
+                free(curr);
 
-        close(fd);
-        free(packet);
-        packet = NULL;
-
-        
-        fd = open(DATA_FILE, O_RDONLY);
-        if (fd == -1) {
-            syslog(LOG_ERR, "open for read failed: %s", strerror(errno));
-            goto cleanup_connection;
-        }
-
-        char filebuf[FILE_BUF_SIZE];
-        ssize_t bytes_read;
-
-        while ((bytes_read = read(fd, filebuf, FILE_BUF_SIZE)) > 0) {
-            if (send(acceptfd, filebuf, bytes_read, 0) == -1) {
-                syslog(LOG_ERR, "send failed: %s", strerror(errno));
-                break;
             }
-        }
-        close(fd);
 
+            curr = tmp;
+        }
     }
+
+    
+    //placeholder for receive implementation
 
     cleanup_connection:
     //printf("cleanup_connection\n");
@@ -299,6 +383,29 @@ int main(int argc, char *argv[]) {
     if (socketfd != -1){
         syslog(LOG_INFO, "Closed Socket %s", PORT);
         close(socketfd);
+    }
+
+    thread_ctx_t *ctx; 
+    SLIST_FOREACH(ctx, &threads, entries) {
+        shutdown(ctx->client_fd, SHUT_RDWR);
+    }
+
+    /* reap finished threads */
+    thread_ctx_t *curr = SLIST_FIRST(&threads);
+    thread_ctx_t *tmp = NULL;
+
+    while (curr) {
+        
+        tmp = SLIST_NEXT(curr, entries);
+        
+        if (curr->finished) {
+            pthread_join(curr->tid, NULL);
+            SLIST_REMOVE(&threads, curr, thread_ctx, entries);
+            free(curr);
+
+        }
+
+        curr = tmp;
     }
     
     if (unlink(DATA_FILE) == 0) {
