@@ -30,8 +30,10 @@
 #define BUF_SIZE 500
 #define PORT "9000"
 
+/* global definitions */
 bool caught_sigint = false;
 bool caught_sigterm = false;
+pthread_mutex_t file_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 
 typedef struct thread_ctx {
@@ -111,20 +113,6 @@ static void daemonize(void)
 void *client_thread(void *arg)
 {
     thread_ctx_t *ctx = arg;
-    /*char buf[1024];
-
-    while (1) {
-        ssize_t n = read(ctx->client_fd, buf, sizeof(buf));
-        if (n <= 0)
-            break;
-
-        write(ctx->client_fd, buf, n);
-    }
-
-    close(ctx->client_fd);
-    ctx->finished = 1;
-    return NULL;*/
-
     int numbytes=0;
     char buf[BUF_SIZE];
 
@@ -163,9 +151,9 @@ void *client_thread(void *arg)
                 goto close_socket;
             }
             packet = new_packet;
-            for(int i=0; i<numbytes; i++){
+            /*for(int i=0; i<numbytes; i++){
                 printf("buf[%d]:0x%X \n",i,buf[i]);
-            }
+            }*/
             memcpy(packet + packet_size, buf, numbytes);
             packet_size += numbytes;
 
@@ -177,6 +165,7 @@ void *client_thread(void *arg)
 
         
         //printf("open !\n");
+        pthread_mutex_lock(&file_mutex);
         int fd = open(DATA_FILE, O_WRONLY | O_CREAT | O_APPEND, 0644);
         if (fd == -1) {
             syslog(LOG_ERR, "open failed: %s", strerror(errno));
@@ -187,12 +176,12 @@ void *client_thread(void *arg)
         if (write(fd, packet, packet_size) == -1) {
             syslog(LOG_ERR, "write failed: %s", strerror(errno));
         }
-
         close(fd);
         free(packet);
         packet = NULL;
+        pthread_mutex_unlock(&file_mutex);
 
-        
+        pthread_mutex_lock(&file_mutex);
         fd = open(DATA_FILE, O_RDONLY);
         if (fd == -1) {
             syslog(LOG_ERR, "open for read failed: %s", strerror(errno));
@@ -209,6 +198,7 @@ void *client_thread(void *arg)
             }
         }
         close(fd);
+        pthread_mutex_unlock(&file_mutex);
     }
 
     close_socket:
@@ -219,6 +209,43 @@ void *client_thread(void *arg)
         ctx->client_fd = -1;
         ctx->finished = 1;
     }
+    return NULL;
+}
+
+void *timestamp_thread(void *arg)
+{
+    (void)arg;
+
+    while (1) {
+        sleep(10);
+
+        if (caught_sigint || caught_sigterm)
+            break;
+
+        time_t now = time(NULL);
+        struct tm *tm_info = localtime(&now);
+        if (!tm_info)
+            continue;
+
+        char timebuf[128];
+        strftime(timebuf, sizeof(timebuf),
+                 "%a, %d %b %Y %H:%M:%S %z", tm_info);
+
+        char line[256];
+        snprintf(line, sizeof(line),
+                 "timestamp:%s\n", timebuf);
+
+        pthread_mutex_lock(&file_mutex);
+        int fd = open(DATA_FILE, O_WRONLY | O_CREAT | O_APPEND, 0644);
+        if (fd >= 0) {
+            if (write(fd, line, strlen(line)) == -1) {
+                syslog(LOG_ERR, "Timestamp_thread: write failed: %s", strerror(errno));
+            }
+            close(fd);
+        }
+        pthread_mutex_unlock(&file_mutex);
+    }
+
     return NULL;
 }
 
@@ -312,6 +339,14 @@ int main(int argc, char *argv[]) {
 
     printf("server waiting connection over localhost:9000 \n");
 
+    /*start timer thread*/
+    pthread_t timestamp_tid;
+    if(pthread_create(&timestamp_tid, NULL, timestamp_thread, NULL) != 0){
+        syslog(LOG_ERR, "Timer thread create Failed! %s", strerror(errno));
+        printf("Timer thread create Failed! \n");
+        return -1;
+    }
+
     while(1){
         if( caught_sigint ) {
             syslog(LOG_ERR, "Caught signal, exiting ");
@@ -368,9 +403,6 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    
-    //placeholder for receive implementation
-
     cleanup_connection:
     //printf("cleanup_connection\n");
     syslog(LOG_INFO, "Ending aesdsocket server! cleanup_connection");
@@ -407,6 +439,8 @@ int main(int argc, char *argv[]) {
 
         curr = tmp;
     }
+
+    pthread_join(timestamp_tid, NULL);
     
     if (unlink(DATA_FILE) == 0) {
         syslog(LOG_INFO, "%s File deleted successfully", DATA_FILE);
