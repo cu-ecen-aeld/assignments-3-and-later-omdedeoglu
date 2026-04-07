@@ -440,8 +440,11 @@ int main(int argc, char *argv[]) {
         curr = tmp;
     }
 
+    syslog(LOG_INFO, "Reap Finished waiting timestamp thread..");
+    pthread_cancel(timestamp_tid);
     pthread_join(timestamp_tid, NULL);
-    
+    syslog(LOG_INFO, "Timestamp thread joined, starting to delete the file..");
+
     if (unlink(DATA_FILE) == 0) {
         syslog(LOG_INFO, "%s File deleted successfully", DATA_FILE);
         printf("File deleted successfully\n");
