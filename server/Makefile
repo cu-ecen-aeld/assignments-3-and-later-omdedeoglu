@@ -6,9 +6,9 @@
 CROSS_COMPILE ?=
 
 # Compiler and tools derived from CROSS_COMPILE
-CC     := $(CROSS_COMPILE)gcc
-STRIP  := $(CROSS_COMPILE)strip
-AR     := $(CROSS_COMPILE)ar
+CC     ?= $(CROSS_COMPILE)gcc
+STRIP  ?= $(CROSS_COMPILE)strip
+AR     ?= $(CROSS_COMPILE)ar
 
 # ===== Project settings =====
 TARGET := aesdsocket
@@ -16,18 +16,10 @@ SRC    := aesdsocket.c
 OBJ    := $(SRC:.c=.o)
 
 # ===== Flags =====
-CFLAGS := -Wall -Wextra -Werror -O2
-LDFLAGS :=
+CFLAGS += -Wall -Wextra -Werror
+LDFLAGS +=
 # If you ever need to link extra libs, add to LDLIBS, e.g. -lm
-LDLIBS :=
-
-# Optional: You can define a sysroot if your cross toolchain needs it
-# Pass SYSROOT on the command line:
-#   make CROSS_COMPILE=aarch64-none-linux-gnu SYSROOT=/path/to/sysroot
-ifdef SYSROOT
-CFLAGS  += --sysroot=$(SYSROOT)
-LDFLAGS += --sysroot=$(SYSROOT)
-endif
+LDLIBS +=
 
 # ===== Default target =====
 .PHONY: all
@@ -47,7 +39,7 @@ clean:
 	rm -f $(TARGET) $(OBJ)
 
 # Build with debug symbols and no optimization
-debug: CFLAGS := -Wall -Wextra -Werror -g -O0
+debug: CFLAGS += -Wall -Wextra -Werror -g -O0
 debug: clean all
 
 # Strip binary (useful for release builds on embedded)
