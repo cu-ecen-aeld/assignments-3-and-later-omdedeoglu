@@ -250,7 +250,9 @@ void *timestamp_thread(void *arg)
         pthread_mutex_lock(&file_mutex);
         int fd = open(DATA_FILE, O_WRONLY | O_CREAT | O_APPEND, 0644);
         if (fd >= 0) {
-            write(fd, line, strlen(line));
+            if (write(fd, line, strlen(line)) == -1) {
+                syslog(LOG_ERR, "Timestamp_thread: write failed: %s", strerror(errno));
+            }
             close(fd);
         }
         pthread_mutex_unlock(&file_mutex);
