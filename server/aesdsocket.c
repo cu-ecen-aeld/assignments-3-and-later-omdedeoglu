@@ -137,7 +137,7 @@ void *client_thread(void *arg)
                 syslog(LOG_ERR, "recv failed: %s", strerror(errno));
                 goto close_socket;
             }
-            if (numbytes == 0) {
+            if (numbytes <= 0) {
                 // client closed connection
                 syslog(LOG_INFO, "Closed connection ");
                 printf("Closed connection \n");
@@ -170,6 +170,7 @@ void *client_thread(void *arg)
         if (fd == -1) {
             syslog(LOG_ERR, "open failed: %s", strerror(errno));
             free(packet);
+            pthread_mutex_unlock(&file_mutex);
             goto close_socket;
         }
 
@@ -179,12 +180,11 @@ void *client_thread(void *arg)
         close(fd);
         free(packet);
         packet = NULL;
-        pthread_mutex_unlock(&file_mutex);
 
-        pthread_mutex_lock(&file_mutex);
         fd = open(DATA_FILE, O_RDONLY);
         if (fd == -1) {
             syslog(LOG_ERR, "open for read failed: %s", strerror(errno));
+            pthread_mutex_unlock(&file_mutex);
             goto close_socket;
         }
 
@@ -216,12 +216,24 @@ void *timestamp_thread(void *arg)
 {
     (void)arg;
 
-    while (1) {
-        sleep(10);
+    while (!caught_sigint && !caught_sigterm) {
 
-        if (caught_sigint || caught_sigterm)
+        int elapsed = 0;
+
+        while (elapsed < 10) {
+            if (caught_sigint || caught_sigterm) {
+                break;
+            }
+            sleep(1);
+            elapsed++;
+        }
+
+        // Only write if full 10 seconds completed
+        if (elapsed < 10) {
             break;
+        }
 
+        // Safe to write timestamp
         time_t now = time(NULL);
         struct tm *tm_info = localtime(&now);
         if (!tm_info)
@@ -229,18 +241,16 @@ void *timestamp_thread(void *arg)
 
         char timebuf[128];
         strftime(timebuf, sizeof(timebuf),
-                 "%a, %d %b %Y %H:%M:%S %z", tm_info);
+                "%a, %d %b %Y %H:%M:%S %z", tm_info);
 
         char line[256];
         snprintf(line, sizeof(line),
-                 "timestamp:%s\n", timebuf);
+                "timestamp:%s\n", timebuf);
 
         pthread_mutex_lock(&file_mutex);
         int fd = open(DATA_FILE, O_WRONLY | O_CREAT | O_APPEND, 0644);
         if (fd >= 0) {
-            if (write(fd, line, strlen(line)) == -1) {
-                syslog(LOG_ERR, "Timestamp_thread: write failed: %s", strerror(errno));
-            }
+            write(fd, line, strlen(line));
             close(fd);
         }
         pthread_mutex_unlock(&file_mutex);
@@ -262,6 +272,7 @@ int main(int argc, char *argv[]) {
     }
 
     openlog("aesdsocketApp", LOG_PID | LOG_CONS, LOG_USER);
+    unlink(DATA_FILE); 
     
     if (daemon_mode) {
         daemonize();
@@ -441,7 +452,7 @@ int main(int argc, char *argv[]) {
     }
 
     syslog(LOG_INFO, "Reap Finished waiting timestamp thread..");
-    pthread_cancel(timestamp_tid);
+    //pthread_cancel(timestamp_tid);
     pthread_join(timestamp_tid, NULL);
     syslog(LOG_INFO, "Timestamp thread joined, starting to delete the file..");
 
