@@ -344,7 +344,7 @@ int main(int argc, char *argv[]) {
         return -1;
     }
 
-    if( listen(socketfd, 1) != 0){
+    if( listen(socketfd, 10) != 0){
         syslog(LOG_ERR, "listen Failed! %s", strerror(errno));
         printf("listen Failed! \n");
         return -1;
