@@ -98,7 +98,7 @@ static void daemonize(void)
     }
 
     // Redirect standard files to /dev/null
-    int fd = open("/dev/null", O_RDWR);
+    /*int fd = open("/dev/null", O_RDWR);
     if (fd != -1) {
         dup2(fd, STDIN_FILENO);
         dup2(fd, STDOUT_FILENO);
@@ -106,7 +106,7 @@ static void daemonize(void)
         if (fd > STDERR_FILENO) {
             close(fd);
         }
-    }
+    }*/
 }
 
 
