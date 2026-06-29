@@ -18,10 +18,12 @@
 #include <linux/cdev.h>
 #include <linux/fs.h> // file_operations
 #include "aesdchar.h"
+#include <linux/slab.h>      // kmalloc, kfree
+#include <linux/uaccess.h>   // copy_from_user, copy_to_user
 int aesd_major =   0; // use dynamic major
 int aesd_minor =   0;
 
-MODULE_AUTHOR("Your Name Here"); /** TODO: fill in your name **/
+MODULE_AUTHOR("omdedeoglu"); /** TODO: fill in your name **/
 MODULE_LICENSE("Dual BSD/GPL");
 
 struct aesd_dev aesd_device;
@@ -32,6 +34,11 @@ int aesd_open(struct inode *inode, struct file *filp)
     /**
      * TODO: handle open
      */
+    struct aesd_dev *dev;
+    dev = container_of(inode->i_cdev, struct aesd_dev, cdev);
+    filp->private_data = dev;
+
+    PDEBUG("open dev=%p", dev);
     return 0;
 }
 
@@ -52,6 +59,30 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
     /**
      * TODO: handle read
      */
+    struct aesd_dev *dev = filp->private_data;
+    PDEBUG("read %zu bytes with offset %lld dev=%p", count, *f_pos, dev);
+    struct aesd_buffer_entry *entry;
+    size_t entry_offset = 0;
+    size_t bytes_available;
+    size_t bytes_to_copy;
+
+    entry = aesd_circular_buffer_find_entry_offset_for_fpos(&dev->buffer, *f_pos, &entry_offset);
+    if (!entry) {
+        PDEBUG("Entry could not found! f_pos=%lld", *f_pos);
+        return 0; /* EOF */
+    }
+
+    bytes_available = entry->size - entry_offset;
+    bytes_to_copy = min(count, bytes_available);
+    PDEBUG("bytes_to_copy=%d", bytes_to_copy);
+
+    if (copy_to_user(buf, entry->buffptr + entry_offset, bytes_to_copy)) {
+        return -EFAULT;
+    }
+
+    *f_pos += bytes_to_copy;
+    retval = bytes_to_copy;
+
     return retval;
 }
 
@@ -63,6 +94,40 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
     /**
      * TODO: handle write
      */
+    struct aesd_dev *dev = filp->private_data;
+    PDEBUG("write %zu bytes with offset %lld dev=%p",count,*f_pos, dev);
+    struct aesd_buffer_entry new_entry;
+    char *kernel_buffer;
+    retval = count;
+    if(count == 0){
+        return 0;
+    }
+
+    kernel_buffer = kmalloc(count, GFP_KERNEL);
+    if (!kernel_buffer) {
+        return -ENOMEM;
+    }
+
+    if (copy_from_user(kernel_buffer, buf, count)) {
+        kfree(kernel_buffer);
+        return -EFAULT;
+    }
+
+    new_entry.buffptr = kernel_buffer;
+    new_entry.size = count;
+
+    /*
+     * If the circular buffer is full, adding a new entry will overwrite
+     * the entry at in_offs. Free that old command first.
+     */
+    if (dev->buffer.full) {
+        kfree(dev->buffer.entry[dev->buffer.in_offs].buffptr);
+        dev->buffer.entry[dev->buffer.in_offs].buffptr = NULL;
+        dev->buffer.entry[dev->buffer.in_offs].size = 0;
+    }
+
+    aesd_circular_buffer_add_entry(&dev->buffer, &new_entry);
+    
     return retval;
 }
 struct file_operations aesd_fops = {
@@ -105,6 +170,7 @@ int aesd_init_module(void)
     /**
      * TODO: initialize the AESD specific portion of the device
      */
+    aesd_circular_buffer_init(&aesd_device.buffer);
 
     result = aesd_setup_cdev(&aesd_device);
 
@@ -113,6 +179,18 @@ int aesd_init_module(void)
     }
     return result;
 
+}
+
+static void aesd_cleanup_device(struct aesd_dev *dev)
+{
+    uint8_t index;
+    struct aesd_buffer_entry *entry;
+
+    AESD_CIRCULAR_BUFFER_FOREACH(entry, &dev->buffer, index) {
+        kfree(entry->buffptr);
+        entry->buffptr = NULL;
+        entry->size = 0;
+    }
 }
 
 void aesd_cleanup_module(void)
@@ -124,6 +202,7 @@ void aesd_cleanup_module(void)
     /**
      * TODO: cleanup AESD specific poritions here as necessary
      */
+    aesd_cleanup_device(&aesd_device);
 
     unregister_chrdev_region(devno, 1);
 }
