@@ -24,6 +24,7 @@
 #endif
 
 #include "aesd-circular-buffer.h"
+#include <linux/mutex.h>
 
 struct aesd_dev
 {
@@ -32,6 +33,10 @@ struct aesd_dev
      */
 
      struct aesd_circular_buffer buffer;
+     char *pending_write_buffer;
+     size_t pending_write_size;
+
+     struct mutex lock;
 
     struct cdev cdev;     /* Char device structure      */
 };
