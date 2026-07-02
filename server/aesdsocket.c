@@ -5,6 +5,10 @@
 #define _POSIX_C_SOURCE 200112L
 #define _GNU_SOURCE
 
+#ifndef USE_AESD_CHAR_DEVICE
+#define USE_AESD_CHAR_DEVICE 1
+#endif
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -24,8 +28,11 @@
 #include <pthread.h>
 
 
-
+#if USE_AESD_CHAR_DEVICE
+#define DATA_FILE "/dev/aesdchar"
+#else
 #define DATA_FILE "/var/tmp/aesdsocketdata"
+#endif
 #define FILE_BUF_SIZE 1024
 #define BUF_SIZE 500
 #define PORT "9000"
@@ -274,7 +281,9 @@ int main(int argc, char *argv[]) {
     }
 
     openlog("aesdsocketApp", LOG_PID | LOG_CONS, LOG_USER);
-    unlink(DATA_FILE); 
+#if !USE_AESD_CHAR_DEVICE
+    unlink(DATA_FILE);
+#endif
     
     if (daemon_mode) {
         daemonize();
@@ -352,6 +361,7 @@ int main(int argc, char *argv[]) {
 
     printf("server waiting connection over localhost:9000 \n");
 
+#if(!USE_AESD_CHAR_DEVICE)    
     /*start timer thread*/
     pthread_t timestamp_tid;
     if(pthread_create(&timestamp_tid, NULL, timestamp_thread, NULL) != 0){
@@ -359,6 +369,7 @@ int main(int argc, char *argv[]) {
         printf("Timer thread create Failed! \n");
         return -1;
     }
+#endif
 
     while(1){
         if( caught_sigint ) {
@@ -453,10 +464,12 @@ int main(int argc, char *argv[]) {
         curr = tmp;
     }
 
+#if !USE_AESD_CHAR_DEVICE     
     syslog(LOG_INFO, "Reap Finished waiting timestamp thread..");
     //pthread_cancel(timestamp_tid);
     pthread_join(timestamp_tid, NULL);
     syslog(LOG_INFO, "Timestamp thread joined, starting to delete the file..");
+
 
     if (unlink(DATA_FILE) == 0) {
         syslog(LOG_INFO, "%s File deleted successfully", DATA_FILE);
@@ -464,7 +477,7 @@ int main(int argc, char *argv[]) {
     } else {
         syslog(LOG_ERR, "unlink failed: %s", strerror(errno));
     }
-
+#endif
     
 
     return 0;

@@ -16,7 +16,9 @@ SRC    := aesdsocket.c
 OBJ    := $(SRC:.c=.o)
 
 # ===== Flags =====
+USE_AESD_CHAR_DEVICE ?= 1
 CFLAGS += -Wall -Wextra -Werror
+CFLAGS += -DUSE_AESD_CHAR_DEVICE=$(USE_AESD_CHAR_DEVICE)
 LDFLAGS +=
 # If you ever need to link extra libs, add to LDLIBS, e.g. -lm
 LDLIBS +=
